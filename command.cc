@@ -29,108 +29,100 @@
 #include "tokenizer.h"
 
 
-Command* parse(std::vector<Token> &tokens)
+bool isWord(TokenType t)
 {
-    Command *currentCommand = new Command();
-    SimpleCommand *currentSimpleCommand = new SimpleCommand();
-    bool commandExpected = true;
+    return t == TOKEN_COMMAND || t == TOKEN_ARGUMENT;
+}
+
+
+Command *fail(const std::string &msg, Command *cmd, SimpleCommand *sc)
+{
+    fprintf(stderr, "myshell: %s\n", msg.c_str());
+    cmd->insertSimpleCommand(sc);
+    delete cmd;
+    return nullptr;
+}
+
+Command *parse(std::vector<Token> &tokens)
+{
+    if (tokens.size() <= 1)          // only EOF: blank line
+        return nullptr;
+
+    Command *cmd = new Command();
+    SimpleCommand *sc = new SimpleCommand();
 
     for (size_t i = 0; i < tokens.size(); i++)
     {
-        Token &token = tokens[i];
-
-        if (token.type == TOKEN_EOF)
-        {
+        const Token &tok = tokens[i];
+        if (tok.type == TOKEN_EOF)
             break;
-        }
 
-        switch (token.type)
+        if (cmd->_background)
+            return fail("nothing may follow '&'", cmd, sc);
+
+        switch (tok.type)
         {
         case TOKEN_COMMAND:
-            if (!commandExpected)
-            {
-                break;
-            }
-            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
-            commandExpected = false;
-            break;
-
         case TOKEN_ARGUMENT:
-            if (commandExpected)
-            {
-                break;
-            }
-            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            sc->insertArgument(strdup(tok.value.c_str()));
             break;
 
         case TOKEN_PIPE:
-            if (!commandExpected)
-            {
-                currentCommand->insertSimpleCommand(currentSimpleCommand);
-                currentSimpleCommand = new SimpleCommand();
-                commandExpected = true;
-            }
-            break;
-
-        case TOKEN_REDIRECT:
-        case TOKEN_APPEND:
-        case TOKEN_INPUT:
-        case TOKEN_ERROR:
-        case TOKEN_REDIRECT_AND_ERROR:
-            if (i + 1 >= tokens.size() ||
-                (tokens[i + 1].type != TOKEN_COMMAND &&
-                tokens[i + 1].type != TOKEN_ARGUMENT))
-            {
-                break;
-            }
-
-            i++;
-            if (token.type == TOKEN_INPUT)
-            {
-                free(currentCommand->_inputFile);
-                currentCommand->_inputFile = strdup(tokens[i].value.c_str());
-            }
-            else if (token.type == TOKEN_ERROR)
-            {
-                free(currentCommand->_errFile);
-                currentCommand->_errFile = strdup(tokens[i].value.c_str());
-            }
-            else
-            {
-                free(currentCommand->_outFile);
-                currentCommand->_outFile = strdup(tokens[i].value.c_str());
-                currentCommand->_append = token.type == TOKEN_APPEND ||
-                                        token.type == TOKEN_REDIRECT_AND_ERROR;
-
-                if (token.type == TOKEN_REDIRECT_AND_ERROR)
-                {
-                    free(currentCommand->_errFile);
-                    currentCommand->_errFile = strdup(tokens[i].value.c_str());
-                    currentCommand->_out_error = 1;
-                }
-            }
+            if (sc->_numberOfArguments == 0)
+                return fail("missing command before '|'", cmd, sc);
+            cmd->insertSimpleCommand(sc);
+            sc = new SimpleCommand();
             break;
 
         case TOKEN_BACKGROUND:
-            currentCommand->_background = 1;
+            if (sc->_numberOfArguments == 0)
+                return fail("'&' with no command", cmd, sc);
+            cmd->_background = 1;
             break;
 
-        case TOKEN_EOF:
+        default:   // the five redirection tokens
+        {
+            if (i + 1 >= tokens.size() || !isWord(tokens[i + 1].type))
+                return fail("missing file name after '" + tok.value + "'", cmd, sc);
+
+            const std::string &file = tokens[++i].value;
+
+            if (tok.type == TOKEN_INPUT)
+            {
+                free(cmd->_inputFile);
+                cmd->_inputFile = strdup(file.c_str());
+            }
+            else if (tok.type == TOKEN_ERROR)
+            {
+                free(cmd->_errFile);
+                cmd->_errFile = strdup(file.c_str());
+            }
+            else
+            {
+                free(cmd->_outFile);
+                cmd->_outFile = strdup(file.c_str());
+                cmd->_append = (tok.type == TOKEN_APPEND ||
+                                tok.type == TOKEN_REDIRECT_AND_ERROR);
+                if (tok.type == TOKEN_REDIRECT_AND_ERROR)
+                {
+                    free(cmd->_errFile);
+                    cmd->_errFile = strdup(file.c_str());
+                    cmd->_out_error = 1;
+                }
+            }
             break;
+        }
         }
     }
 
-    if (currentSimpleCommand->_numberOfArguments > 0)
-    {
-        currentCommand->insertSimpleCommand(currentSimpleCommand);
-    }
-    else
-    {
-        free(currentSimpleCommand->_arguments);
-        delete currentSimpleCommand;
-    }
+    if (sc->_numberOfArguments == 0)
+        return fail(cmd->_numberOfSimpleCommands > 0
+                        ? "missing command after '|'"
+                        : "missing command",
+                    cmd, sc);
 
-    return currentCommand;
+    cmd->insertSimpleCommand(sc);
+    return cmd;
 }
 
 SimpleCommand::SimpleCommand()
