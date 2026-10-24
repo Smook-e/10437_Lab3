@@ -30,6 +30,7 @@ struct Command
 	void clear();
 
 	Command();
+	~Command();
 	void insertSimpleCommand(SimpleCommand *simpleCommand);
 
 	static Command _currentCommand;

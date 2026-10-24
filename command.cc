@@ -31,16 +31,106 @@
 
 Command* parse(std::vector<Token> &tokens)
 {
-    Command currentCommand;
+    Command *currentCommand = new Command();
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
+    bool commandExpected = true;
 
-    
-    /*
-      Implement this function 
-      you must parse for all possible tokens scenario
-      right now command.execute only print the format , you will inject it in your logic.
-    */
-    return &currentCommand;
+    for (size_t i = 0; i < tokens.size(); i++)
+    {
+        Token &token = tokens[i];
+
+        if (token.type == TOKEN_EOF)
+        {
+            break;
+        }
+
+        switch (token.type)
+        {
+        case TOKEN_COMMAND:
+            if (!commandExpected)
+            {
+                break;
+            }
+            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            commandExpected = false;
+            break;
+
+        case TOKEN_ARGUMENT:
+            if (commandExpected)
+            {
+                break;
+            }
+            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            break;
+
+        case TOKEN_PIPE:
+            if (!commandExpected)
+            {
+                currentCommand->insertSimpleCommand(currentSimpleCommand);
+                currentSimpleCommand = new SimpleCommand();
+                commandExpected = true;
+            }
+            break;
+
+        case TOKEN_REDIRECT:
+        case TOKEN_APPEND:
+        case TOKEN_INPUT:
+        case TOKEN_ERROR:
+        case TOKEN_REDIRECT_AND_ERROR:
+            if (i + 1 >= tokens.size() ||
+                (tokens[i + 1].type != TOKEN_COMMAND &&
+                tokens[i + 1].type != TOKEN_ARGUMENT))
+            {
+                break;
+            }
+
+            i++;
+            if (token.type == TOKEN_INPUT)
+            {
+                free(currentCommand->_inputFile);
+                currentCommand->_inputFile = strdup(tokens[i].value.c_str());
+            }
+            else if (token.type == TOKEN_ERROR)
+            {
+                free(currentCommand->_errFile);
+                currentCommand->_errFile = strdup(tokens[i].value.c_str());
+            }
+            else
+            {
+                free(currentCommand->_outFile);
+                currentCommand->_outFile = strdup(tokens[i].value.c_str());
+                currentCommand->_append = token.type == TOKEN_APPEND ||
+                                        token.type == TOKEN_REDIRECT_AND_ERROR;
+
+                if (token.type == TOKEN_REDIRECT_AND_ERROR)
+                {
+                    free(currentCommand->_errFile);
+                    currentCommand->_errFile = strdup(tokens[i].value.c_str());
+                    currentCommand->_out_error = 1;
+                }
+            }
+            break;
+
+        case TOKEN_BACKGROUND:
+            currentCommand->_background = 1;
+            break;
+
+        case TOKEN_EOF:
+            break;
+        }
+    }
+
+    if (currentSimpleCommand->_numberOfArguments > 0)
+    {
+        currentCommand->insertSimpleCommand(currentSimpleCommand);
+    }
+    else
+    {
+        free(currentSimpleCommand->_arguments);
+        delete currentSimpleCommand;
+    }
+
+    return currentCommand;
 }
 
 SimpleCommand::SimpleCommand()
@@ -78,6 +168,12 @@ Command::Command()
     _inputFile = 0;
     _errFile = 0;
     _background = 0;
+}
+
+Command::~Command()
+{
+    clear();
+    free(_simpleCommands);
 }
 
 void Command::insertSimpleCommand(SimpleCommand *simpleCommand)
@@ -179,14 +275,8 @@ void prompt()
         std::vector<Token> tokens = tokenize(input);
         Command* cmd = parse(tokens);
         cmd->execute();
+        delete cmd;
     }
-}
-
-void Command::execute()
-{
-    print();
-    // execution code goes here
-    clear();
 }
 
 Command Command::_currentCommand;
