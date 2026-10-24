@@ -1,6 +1,6 @@
 
 /*
- * 
+ *
  *
  * Template file.
  * You will need to add more code here to execute the command table.
@@ -27,13 +27,9 @@
 #include <sstream>
 #include "command.h"
 #include "tokenizer.h"
+#include <errno.h> // add to the includes at the top
 
-
-bool isWord(TokenType t)
-{
-    return t == TOKEN_COMMAND || t == TOKEN_ARGUMENT;
-}
-
+static int logFd = -1;
 
 Command *fail(const std::string &msg, Command *cmd, SimpleCommand *sc)
 {
@@ -45,7 +41,7 @@ Command *fail(const std::string &msg, Command *cmd, SimpleCommand *sc)
 
 Command *parse(std::vector<Token> &tokens)
 {
-    if (tokens.size() <= 1)          // only EOF: blank line
+    if (tokens.size() <= 1) // only EOF: blank line
         return nullptr;
 
     Command *cmd = new Command();
@@ -80,9 +76,9 @@ Command *parse(std::vector<Token> &tokens)
             cmd->_background = 1;
             break;
 
-        default:   // the five redirection tokens
+        default: // the five redirection tokens
         {
-            if (i + 1 >= tokens.size() || !isWord(tokens[i + 1].type))
+            if (i + 1 >= tokens.size() || tokens[i + 1].type != TOKEN_ARGUMENT)
                 return fail("missing file name after '" + tok.value + "'", cmd, sc);
 
             const std::string &file = tokens[++i].value;
@@ -239,20 +235,207 @@ void Command::print()
     printf("  Output       Input        Error        Err&Out       Background\n");
     printf("  ------------ ------------ ------------ ------------ ------------\n");
     printf("  %-12s %-12s %-12s %-12s %-12s\n", _outFile ? _outFile : "default",
-           _inputFile ? _inputFile : "default", _errFile ? _errFile : "default", _out_error == 1 ? _errFile : "default"
-           ,_background ? "YES" : "NO");
+           _inputFile ? _inputFile : "default", _errFile ? _errFile : "default", _out_error == 1 ? _errFile : "default", _background ? "YES" : "NO");
     printf("\n\n");
 }
 
+bool builtin(SimpleCommand *sc)
+{
+    char **a = sc->_arguments;
+
+    if (strcmp(a[0], "exit") == 0)
+    {
+        printf("Good bye!!\n");
+        exit(0);
+    }
+    if (strcmp(a[0], "cd") == 0)
+    {
+        if (sc->_numberOfArguments > 2)
+        {
+            fprintf(stderr, "cd: too many arguments\n");
+            return true;
+        }
+        const char *dir = a[1] ? a[1] : getenv("HOME");
+        if (!dir)
+            fprintf(stderr, "cd: HOME not set\n");
+        else if (chdir(dir) != 0)
+            fprintf(stderr, "cd: %s: %s\n", dir, strerror(errno));
+        return true;
+    }
+    return false;
+}
+
+
+void logChild(pid_t pid, int status)
+{
+    char buf[128];
+    int n;
+    if (WIFEXITED(status))
+        n = snprintf(buf, sizeof buf, "child %d terminated, exit status %d\n",
+                     (int)pid, WEXITSTATUS(status));
+    else
+        n = snprintf(buf, sizeof buf, "child %d killed by signal %d\n",
+                     (int)pid, WTERMSIG(status));
+    if (logFd >= 0 && n > 0)
+        write(logFd, buf, n);
+}
+
+void childHandler(int)
+{
+    int saved = errno; // handlers must not clobber errno
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) // reap every finished child
+        logChild(pid, status);
+    errno = saved;
+}
+
+void setupSignals()
+{
+    logFd = open("shell.log", O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (logFd < 0)
+        perror("shell.log");
+
+    signal(SIGINT, SIG_IGN); // Ctrl-C does nothing in the shell
+
+    struct sigaction sa = {};
+    sa.sa_handler = childHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP; // restart interrupted syscalls, ignore stop events
+    sigaction(SIGCHLD, &sa, nullptr);
+}
 void Command::execute()
 {
+#ifndef NO_TABLE
     print();
-    /*
-        Write your code here
-    */
+#endif
+    int n = _numberOfSimpleCommands;
+
+    if (n == 1 && builtin(_simpleCommands[0]))
+    {
+        clear();
+        return;
+    }
+
+    int prevRead = -1; 
+    pid_t lastPid = -1;
+
+    for (int i = 0; i < n; i++)
+    {
+        int p[2] = {-1, -1};
+        if (i < n - 1 && pipe(p) < 0)
+        {
+            perror("pipe");
+            break;
+        }
+
+        pid_t pid = fork();
+        if (pid < 0)
+        {
+            perror("fork");
+            if (p[0] >= 0)
+            {
+                close(p[0]);
+                close(p[1]);
+            }
+            break;
+        }
+
+        if (pid == 0) // ---- child ----
+        {
+            signal(SIGINT, SIG_DFL); // children die on Ctrl-C
+
+            if (prevRead >= 0)
+                dup2(prevRead, 0); // read from previous command
+            if (i < n - 1)
+                dup2(p[1], 1); // write to next command
+            if (prevRead >= 0)
+                close(prevRead);
+            if (p[0] >= 0)
+            {
+                close(p[0]);
+                close(p[1]);
+            }
+
+            if (i == 0 && _inputFile) // "<" 
+            {
+                int fd = open(_inputFile, O_RDONLY);
+                if (fd < 0)
+                {
+                    perror(_inputFile);
+                    _exit(1);
+                }
+                dup2(fd, 0);
+                close(fd);
+            }
+            if (i == n - 1) 
+            {
+                if (_outFile)
+                {
+                    int flags = O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC);
+                    int fd = open(_outFile, flags, 0644);
+                    if (fd < 0)
+                    {
+                        perror(_outFile);
+                        _exit(1);
+                    }
+                    dup2(fd, 1);
+                    if (_out_error)
+                        dup2(fd, 2); // ">>&": stderr goes to the same file
+                    close(fd);
+                }
+                if (_errFile && !_out_error)
+                {
+                    int fd = open(_errFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd < 0)
+                    {
+                        perror(_errFile);
+                        _exit(1);
+                    }
+                    dup2(fd, 2);
+                    close(fd);
+                }
+            }
+
+            char **a = _simpleCommands[i]->_arguments;
+            execvp(a[0], a);
+            if (errno == ENOENT)
+                fprintf(stderr, "%s: command not found\n", a[0]);
+            else
+                perror(a[0]);
+            _exit(127);
+        }
+
+        
+        if (prevRead >= 0)
+            close(prevRead);
+        if (i < n - 1)
+        {
+            close(p[1]);
+            prevRead = p[0];
+        }
+        else
+        {
+            prevRead = -1;
+        }
+        lastPid = pid;
+    }
+
+    if (prevRead >= 0)
+        close(prevRead); 
+
+    if (!_background && lastPid > 0)
+    {
+        int status;
+        pid_t r;
+        while ((r = waitpid(lastPid, &status, 0)) < 0 && errno == EINTR)
+        {
+        }
+        if (r > 0)
+            logChild(r, status); // handler didn't get it first
+    }
 
     clear();
-    // prompt();
 }
 
 void prompt()
@@ -262,12 +445,15 @@ void prompt()
     {
         printf("myshell>");
         fflush(stdout);
-        if (!std::getline(std::cin, input))   // Ctrl-D ends the loop
+        if (!std::getline(std::cin, input)) // Ctrl-D ends the loop
             break;
         std::vector<Token> tokens = tokenize(input);
-        Command* cmd = parse(tokens);
-        cmd->execute();
-        delete cmd;
+        Command *cmd = parse(tokens);
+        if (cmd)
+        {
+            cmd->execute();
+            delete cmd;
+        }
     }
 }
 
@@ -276,6 +462,7 @@ SimpleCommand *Command::_currentSimpleCommand;
 
 int main()
 {
+    setupSignals();
     prompt();
     return 0;
 }
