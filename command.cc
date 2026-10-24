@@ -31,6 +31,17 @@
 
 static int logFd = -1;
 
+static bool hasWhitespace(const char *value)
+{
+    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(value);
+         *p != '\0'; p++)
+    {
+        if (isspace(*p))
+            return true;
+    }
+    return false;
+}
+
 Command *fail(const std::string &msg, Command *cmd, SimpleCommand *sc)
 {
     fprintf(stderr, "myshell: %s\n", msg.c_str());
@@ -128,19 +139,57 @@ SimpleCommand::SimpleCommand()
     _arguments = (char **)malloc(_numberOfAvailableArguments * sizeof(char *));
 }
 
-void SimpleCommand::insertArgument(char *argument)
+static void insertLiteralArgument(SimpleCommand *command, char *argument)
 {
-    if (_numberOfAvailableArguments == _numberOfArguments + 1)
+    if (command->_numberOfAvailableArguments == command->_numberOfArguments + 1)
     {
-        _numberOfAvailableArguments *= 2;
-        _arguments = (char **)realloc(_arguments,
-                                      _numberOfAvailableArguments * sizeof(char *));
+        command->_numberOfAvailableArguments *= 2;
+        command->_arguments = (char **)realloc(
+            command->_arguments,
+            command->_numberOfAvailableArguments * sizeof(char *));
     }
 
-    _arguments[_numberOfArguments] = argument;
-    _arguments[_numberOfArguments + 1] = NULL;
+    command->_arguments[command->_numberOfArguments] = argument;
+    command->_arguments[command->_numberOfArguments + 1] = NULL;
+    command->_numberOfArguments++;
+}
 
-    _numberOfArguments++;
+void SimpleCommand::insertArgument(char *argument)
+{
+    if (strpbrk(argument, "*?") != nullptr)
+    {
+        glob_t matches = {};
+        int result = glob(argument, 0, nullptr, &matches);
+
+        if (result == 0)
+        {
+            int inserted = 0;
+            for (size_t i = 0; i < matches.gl_pathc; i++)
+            {
+                // csh wildcards match nonspace characters only.
+                if (!hasWhitespace(matches.gl_pathv[i]))
+                {
+                    insertLiteralArgument(this, strdup(matches.gl_pathv[i]));
+                    inserted++;
+                }
+            }
+
+            if (inserted > 0)
+            {
+                globfree(&matches);
+                free(argument);
+                return;
+            }
+        }
+        else if (result != GLOB_NOMATCH)
+        {
+            fprintf(stderr, "myshell: wildcard expansion failed for '%s'\n", argument);
+        }
+
+        globfree(&matches);
+    }
+
+    insertLiteralArgument(this, argument);
 }
 
 Command::Command()
@@ -306,9 +355,6 @@ void setupSignals()
 }
 void Command::execute()
 {
-#ifndef NO_TABLE
-    print();
-#endif
     int n = _numberOfSimpleCommands;
 
     if (n == 1 && builtin(_simpleCommands[0]))

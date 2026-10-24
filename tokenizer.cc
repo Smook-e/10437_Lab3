@@ -2,14 +2,18 @@
 #include <sstream>
 #include <iostream>
 
+
 std::vector<Token> tokenize(const std::string &input)
 {
     std::vector<Token> tokens;
-    std::istringstream stream(input);
     std::string word;
+    char quote = '\0';
 
-    while (stream >> word)
+    auto addToken = [&]()
     {
+        if (word.empty())
+            return;
+
         Token token;
 
         if (word == "|")
@@ -27,18 +31,46 @@ std::vector<Token> tokenize(const std::string &input)
         else if (word == ">>&")
             token.type = TOKEN_REDIRECT_AND_ERROR;
         else if (tokens.empty() || tokens.back().type == TOKEN_PIPE)
-        {
             token.type = TOKEN_COMMAND;
-        }
         else
-        {
             token.type = TOKEN_ARGUMENT;
-        }
 
         token.value = word;
         tokens.push_back(token);
+        word.clear();
+    };
+
+    for (char c : input)
+    {
+        if (quote != '\0')
+        {
+            if (c == quote)
+                quote = '\0';
+            else
+                word += c;
+        }
+        else if (c == '\'' || c == '"')
+        {
+            quote = c;
+        }
+        else if (std::isspace(static_cast<unsigned char>(c)))
+        {
+            addToken();
+        }
+        else if (c == '|' || c == '<' || c == '>' || c == '&')
+        {
+            addToken();
+            word = c;
+            addToken();
+        }
+        else
+        {
+            word += c;
+        }
     }
 
+    addToken();
     tokens.push_back({TOKEN_EOF, ""});
+
     return tokens;
 }
