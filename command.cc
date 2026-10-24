@@ -27,7 +27,7 @@
 #include <sstream>
 #include "command.h"
 #include "tokenizer.h"
-#include <errno.h> // add to the includes at the top
+#include <errno.h> 
 
 static int logFd = -1;
 
@@ -52,7 +52,7 @@ Command *fail(const std::string &msg, Command *cmd, SimpleCommand *sc)
 
 Command *parse(std::vector<Token> &tokens)
 {
-    if (tokens.size() <= 1) // only EOF: blank line
+    if (tokens.size() <= 1) 
         return nullptr;
 
     Command *cmd = new Command();
@@ -87,7 +87,7 @@ Command *parse(std::vector<Token> &tokens)
             cmd->_background = 1;
             break;
 
-        default: // the five redirection tokens
+        default: 
         {
             if (i + 1 >= tokens.size() || tokens[i + 1].type != TOKEN_ARGUMENT)
                 return fail("missing file name after '" + tok.value + "'", cmd, sc);
@@ -166,7 +166,7 @@ void SimpleCommand::insertArgument(char *argument)
             int inserted = 0;
             for (size_t i = 0; i < matches.gl_pathc; i++)
             {
-                // csh wildcards match nonspace characters only.
+                
                 if (!hasWhitespace(matches.gl_pathv[i]))
                 {
                     insertLiteralArgument(this, strdup(matches.gl_pathv[i]));
@@ -331,10 +331,10 @@ void logChild(pid_t pid, int status)
 
 void childHandler(int)
 {
-    int saved = errno; // handlers must not clobber errno
+    int saved = errno; 
     int status;
     pid_t pid;
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) // reap every finished child
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
         logChild(pid, status);
     errno = saved;
 }
@@ -345,12 +345,12 @@ void setupSignals()
     if (logFd < 0)
         perror("shell.log");
 
-    signal(SIGINT, SIG_IGN); // Ctrl-C does nothing in the shell
+    signal(SIGINT, SIG_IGN); 
 
     struct sigaction sa = {};
     sa.sa_handler = childHandler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP; // restart interrupted syscalls, ignore stop events
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP; 
     sigaction(SIGCHLD, &sa, nullptr);
 }
 void Command::execute()
@@ -387,14 +387,14 @@ void Command::execute()
             break;
         }
 
-        if (pid == 0) // ---- child ----
+        if (pid == 0) 
         {
-            signal(SIGINT, SIG_DFL); // children die on Ctrl-C
+            signal(SIGINT, SIG_DFL); 
 
             if (prevRead >= 0)
-                dup2(prevRead, 0); // read from previous command
+                dup2(prevRead, 0); 
             if (i < n - 1)
-                dup2(p[1], 1); // write to next command
+                dup2(p[1], 1); 
             if (prevRead >= 0)
                 close(prevRead);
             if (p[0] >= 0)
@@ -403,7 +403,7 @@ void Command::execute()
                 close(p[1]);
             }
 
-            if (i == 0 && _inputFile) // "<" 
+            if (i == 0 && _inputFile)
             {
                 int fd = open(_inputFile, O_RDONLY);
                 if (fd < 0)
@@ -427,7 +427,7 @@ void Command::execute()
                     }
                     dup2(fd, 1);
                     if (_out_error)
-                        dup2(fd, 2); // ">>&": stderr goes to the same file
+                        dup2(fd, 2);
                     close(fd);
                 }
                 if (_errFile && !_out_error)
@@ -478,7 +478,7 @@ void Command::execute()
         {
         }
         if (r > 0)
-            logChild(r, status); // handler didn't get it first
+            logChild(r, status); 
     }
 
     clear();
@@ -491,7 +491,7 @@ void prompt()
     {
         printf("myshell>");
         fflush(stdout);
-        if (!std::getline(std::cin, input)) // Ctrl-D ends the loop
+        if (!std::getline(std::cin, input)) 
             break;
         std::vector<Token> tokens = tokenize(input);
         Command *cmd = parse(tokens);
