@@ -40,8 +40,10 @@ std::vector<Token> tokenize(const std::string &input)
         word.clear();
     };
 
-    for (char c : input)
+    for (size_t i = 0; i < input.size(); ++i)
     {
+        char c = input[i];
+
         if (quote != '\0')
         {
             if (c == quote)
@@ -57,7 +59,38 @@ std::vector<Token> tokenize(const std::string &input)
         {
             addToken();
         }
-        else if (c == '|' || c == '<' || c == '>' || c == '&')
+        else if (c == '2' && word.empty() &&
+                 i + 1 < input.size() && input[i + 1] == '>')
+        {
+            addToken();
+            word = "2>";
+            addToken();
+        }
+        else if (c == '>')
+        {
+            addToken();
+
+            if (i + 1 < input.size() && input[i + 1] == '>')
+            {
+                if (i + 2 < input.size() && input[i + 2] == '&')
+                {
+                    word = ">>&";
+                    i += 2;
+                }
+                else
+                {
+                    word = ">>";
+                    ++i;
+                }
+            }
+            else
+            {
+                word = ">";
+            }
+
+            addToken();
+        }
+        else if (c == '|' || c == '<' || c == '&')
         {
             addToken();
             word = c;
@@ -74,3 +107,4 @@ std::vector<Token> tokenize(const std::string &input)
 
     return tokens;
 }
+

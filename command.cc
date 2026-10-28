@@ -31,16 +31,7 @@
 
 static int logFd = -1;
 
-static bool hasWhitespace(const char *value)
-{
-    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(value);
-         *p != '\0'; p++)
-    {
-        if (isspace(*p))
-            return true;
-    }
-    return false;
-}
+
 
 Command *fail(const std::string &msg, Command *cmd, SimpleCommand *sc)
 {
@@ -166,12 +157,8 @@ void SimpleCommand::insertArgument(char *argument)
             int inserted = 0;
             for (size_t i = 0; i < matches.gl_pathc; i++)
             {
-                
-                if (!hasWhitespace(matches.gl_pathv[i]))
-                {
                     insertLiteralArgument(this, strdup(matches.gl_pathv[i]));
                     inserted++;
-                }
             }
 
             if (inserted > 0)
@@ -353,6 +340,7 @@ void setupSignals()
     sa.sa_flags = SA_RESTART | SA_NOCLDSTOP; 
     sigaction(SIGCHLD, &sa, nullptr);
 }
+
 void Command::execute()
 {
     int n = _numberOfSimpleCommands;
